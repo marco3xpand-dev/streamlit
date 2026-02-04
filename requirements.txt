@@ -2,4 +2,5 @@ streamlit
 pandas
 pillow
 pytesseract
-opencv-python
+opencv-python-headless
+
