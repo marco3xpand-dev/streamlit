@@ -1,6 +1,10 @@
 import streamlit as st
 import pandas as pd
 import pytesseract
+import shutil
+
+if shutil.which("tesseract") is None:
+    raise RuntimeError("Tesseract non trovato nel sistema")
 import cv2
 import numpy as np
 from PIL import Image
