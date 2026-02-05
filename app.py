@@ -1,84 +1,132 @@
 import streamlit as st
 import pandas as pd
 import pytesseract
-import shutil
 import cv2
 import numpy as np
 from PIL import Image
 import re
+from pytesseract import Output
 
-# -----------------------------
-# Check Tesseract
-# -----------------------------
-if shutil.which("tesseract") is None:
-    raise RuntimeError("Tesseract non trovato nel sistema")
-
-# -----------------------------
-# UI
-# -----------------------------
+# --------------------------------------------------
+# Config
+# --------------------------------------------------
 st.set_page_config(page_title="HYROX OCR → CSV", layout="centered")
 st.title("HYROX OCR Tool (Internal)")
 
 st.write(
     "Carica **2 screenshot Roxfit**:\n"
-    "- uno con **Runs**\n"
-    "- uno con **Stations**\n\n"
-    "Il tool esegue OCR e genera un CSV pronto per Excel."
+    "- uno con **RUNS**\n"
+    "- uno con **STATIONS**\n\n"
+    "Il tool esegue OCR robusto e genera un CSV."
 )
 
-# -----------------------------
-# OCR helpers
-# -----------------------------
-def run_ocr(pil_img):
-    img = np.array(pil_img)
-    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-    gray = cv2.resize(gray, None, fx=2.0, fy=2.0, interpolation=cv2.INTER_CUBIC)
-    _, thresh = cv2.threshold(
-        gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU
-    )
-    text = pytesseract.image_to_string(
-        thresh,
-        config="--psm 6 -c tessedit_char_whitelist=0123456789:"
-    )
-    return text.lower()
-
+# --------------------------------------------------
+# Utility
+# --------------------------------------------------
 def mmss_to_sec(t):
     m, s = t.split(":")
     return int(m) * 60 + int(s)
 
-# -----------------------------
+# --------------------------------------------------
+# OCR RUNS – flessibile e robusto
+# --------------------------------------------------
+def extract_runs_flexible(pil_img):
+    img = np.array(pil_img)
+    h, w, _ = img.shape
+
+    # rimuove SOLO status bar (molto conservativo)
+    img = img[int(h * 0.08):h, :]
+
+    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+    gray = cv2.resize(gray, None, fx=2, fy=2, interpolation=cv2.INTER_CUBIC)
+    _, thresh = cv2.threshold(
+        gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU
+    )
+
+    data = pytesseract.image_to_data(
+        thresh,
+        output_type=Output.DATAFRAME,
+        config="--psm 6 -c tessedit_char_whitelist=0123456789:"
+    )
+
+    data = data.dropna(subset=["text"])
+    data["text"] = data["text"].str.strip()
+
+    # mm:ss
+    mask = data["text"].str.match(r"^\d{2}:\d{2}$")
+    data = data[mask]
+
+    # in secondi
+    data["sec"] = data["text"].apply(mmss_to_sec)
+
+    # filtro fisiologico run HYROX
+    data = data[(data["sec"] > 150) & (data["sec"] < 420)]
+
+    if data.empty:
+        return []
+
+    # clustering per colonna (x)
+    data["x_center"] = data["left"] + data["width"] / 2
+    data["col"] = pd.qcut(data["x_center"], q=3, duplicates="drop")
+
+    best_col = data["col"].value_counts().idxmax()
+    runs = data[data["col"] == best_col].sort_values("top")
+
+    return runs["text"].tolist()
+
+# --------------------------------------------------
+# OCR STATIONS – semplice (ordine HYROX)
+# --------------------------------------------------
+def extract_station_times(pil_img):
+    img = np.array(pil_img)
+    h, w, _ = img.shape
+
+    img = img[int(h * 0.08):h, :]
+
+    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+    gray = cv2.resize(gray, None, fx=2, fy=2, interpolation=cv2.INTER_CUBIC)
+    _, thresh = cv2.threshold(
+        gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU
+    )
+
+    text = pytesseract.image_to_string(
+        thresh,
+        config="--psm 6 -c tessedit_char_whitelist=0123456789:"
+    )
+
+    times = re.findall(r"\d{2}:\d{2}", text)
+
+    # filtro fisiologico stazioni
+    out = []
+    for t in times:
+        sec = mmss_to_sec(t)
+        if 30 < sec < 600:
+            out.append(t)
+
+    return out
+
+# --------------------------------------------------
 # Upload
-# -----------------------------
+# --------------------------------------------------
 runs_img = st.file_uploader("Screenshot RUNS", type=["png", "jpg", "jpeg"])
 stations_img = st.file_uploader("Screenshot STATIONS", type=["png", "jpg", "jpeg"])
 
-# -----------------------------
-# Processing
-# -----------------------------
 if runs_img and stations_img and st.button("Processa e genera CSV"):
 
     with st.spinner("OCR in corso..."):
-        runs_text = run_ocr(Image.open(runs_img))
-        stations_text = run_ocr(Image.open(stations_img))
-
-    st.subheader("OCR RAW (debug)")
-    st.text_area("Runs OCR", runs_text, height=150)
-    st.text_area("Stations OCR", stations_text, height=200)
-
-    TIME_PATTERN = re.compile(r"\d{1,2}:\d{2}")
-
-    def extract_times(text):
-        return TIME_PATTERN.findall(text)
+        run_times = extract_runs_flexible(Image.open(runs_img))
+        station_times = extract_station_times(Image.open(stations_img))
 
     results = []
 
-    # -------- RUNS (per ordine) --------
-    run_times = extract_times(runs_text)
+    # -------- RUNS --------
+    if len(run_times) != 8:
+        st.warning(f"Trovate {len(run_times)} runs (attese 8)")
 
     for i, t in enumerate(run_times[:8]):
         results.append((f"Run_{i+1}", mmss_to_sec(t)))
 
-    # -------- STATIONS (per ordine HYROX) --------
+    # -------- STATIONS --------
     station_order = [
         "SkiErg",
         "SledPush",
@@ -90,25 +138,22 @@ if runs_img and stations_img and st.button("Processa e genera CSV"):
         "WallBall"
     ]
 
-    station_times = extract_times(stations_text)
-
     for name, t in zip(station_order, station_times):
         results.append((name, mmss_to_sec(t)))
 
-    if len(results) < 16:
-        st.warning("Attenzione: numero di segmenti inferiore al previsto.")
+    if not results:
+        st.error("Nessun dato riconosciuto.")
+    else:
+        df = pd.DataFrame(results, columns=["segment", "time_sec"])
 
-    df = pd.DataFrame(results, columns=["segment", "time_sec"])
+        st.subheader("Dati estratti")
+        st.dataframe(df, use_container_width=True)
 
-    st.subheader("Dati estratti")
-    st.dataframe(df, use_container_width=True)
-
-    csv = df.to_csv(index=False).encode("utf-8")
-
-    st.download_button(
-        "Scarica CSV",
-        csv,
-        file_name="hyrox_race.csv",
-        mime="text/csv"
-    )
+        csv = df.to_csv(index=False).encode("utf-8")
+        st.download_button(
+            "Scarica CSV",
+            csv,
+            file_name="hyrox_race.csv",
+            mime="text/csv"
+        )
 
