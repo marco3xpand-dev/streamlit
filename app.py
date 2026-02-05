@@ -39,10 +39,10 @@ def extract_runs_roi(pil_img):
     # -----------------------------
     # ROI RUNS (percentuale)
     # -----------------------------
-    y1 = int(h * 0.20)
-    y2 = int(h * 0.90)
-    x1 = int(w * 0.55)
-    x2 = int(w * 0.85)
+    y1 = int(h * 0.15)
+    y2 = int(h * 0.55)
+    x1 = int(w * 0.65)
+    x2 = int(w * 0.82)
 
     roi = img[y1:y2, x1:x2]
 
