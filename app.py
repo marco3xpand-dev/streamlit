@@ -36,9 +36,15 @@ def preprocess_image(img):
 
 def run_ocr(pil_img):
     img = np.array(pil_img)
-    img = preprocess_image(img)
-    text = pytesseract.image_to_string(img, config="--psm 6")
+    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+    gray = cv2.resize(gray, None, fx=2.0, fy=2.0, interpolation=cv2.INTER_CUBIC)
+    _, thresh = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+    text = pytesseract.image_to_string(
+        thresh,
+        config="--psm 6 -c tessedit_char_whitelist=0123456789:abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
+    )
     return text.lower()
+
 
 def mmss_to_sec(t):
     m, s = t.split(":")
@@ -63,63 +69,52 @@ if runs_img and stations_img and st.button("Processa e genera CSV"):
     results = []
 
     # -----------------------------
-    # Parse RUNS
+    # Parsing
     # -----------------------------
-    run_pattern = re.compile(r"run\s*(\d)\D+(\d{1,2}:\d{2})")
+   if runs_img and stations_img and st.button("Processa e genera CSV"):
 
-    for m in run_pattern.finditer(runs_text):
-        run_id = f"Run_{m.group(1)}"
-        time_sec = mmss_to_sec(m.group(2))
-        results.append((run_id, time_sec))
+    with st.spinner("OCR in corso..."):
+        runs_text = run_ocr(Image.open(runs_img))
+        stations_text = run_ocr(Image.open(stations_img))
 
-    # -----------------------------
-    # Parse STATIONS
-    # -----------------------------
-    station_map = {
-        "ski": "SkiErg",
-        "sled push": "SledPush",
-        "sled pull": "SledPull",
-        "bbj": "BurpeeBroadJump",
-        "burpee": "BurpeeBroadJump",
-        "row": "Rower",
-        "farmers": "FarmersCarry",
-        "sandbag": "SandbagLunge",
-        "wall": "WallBall"
-    }
+    st.subheader("OCR RAW (debug)")
+    st.text_area("Runs OCR", runs_text, height=150)
+    st.text_area("Stations OCR", stations_text, height=200)
 
-    time_pattern = re.compile(r"\d{1,2}:\d{2}")
+    TIME_PATTERN = re.compile(r"\d{1,2}:\d{2}")
 
-    for line in stations_text.split("\n"):
-        t = time_pattern.search(line)
-        if not t:
-            continue
+    def extract_times(text):
+        return TIME_PATTERN.findall(text)
 
-        for key, name in station_map.items():
-            if key in line:
-                results.append((name, mmss_to_sec(t.group())))
-                break
+    results = []
+
+    # -------- RUNS (per ordine) --------
+    run_times = extract_times(runs_text)
+
+    for i, t in enumerate(run_times[:8]):
+        results.append((f"Run_{i+1}", mmss_to_sec(t)))
+
+    # -------- STATIONS (per ordine HYROX) --------
+    station_order = [
+        "SkiErg",
+        "SledPush",
+        "SledPull",
+        "BurpeeBroadJump",
+        "Rower",
+        "FarmersCarry",
+        "SandbagLunge",
+        "WallBall"
+    ]
+
+    station_times = extract_times(stations_text)
+
+    for name, t in zip(station_order, station_times):
+        results.append((name, mmss_to_sec(t)))
 
     if len(results) == 0:
-        st.error("Nessun dato riconosciuto. OCR troppo sporco.")
+        st.error("Nessun dato riconosciuto.")
     else:
         df = pd.DataFrame(results, columns=["segment", "time_sec"])
-        df = df.drop_duplicates("segment", keep="first")
-
-        hyrox_order = [
-            "Run_1", "SkiErg",
-            "Run_2", "SledPush",
-            "Run_3", "SledPull",
-            "Run_4", "BurpeeBroadJump",
-            "Run_5", "Rower",
-            "Run_6", "FarmersCarry",
-            "Run_7", "SandbagLunge",
-            "Run_8", "WallBall"
-        ]
-
-        df["order"] = df["segment"].apply(
-            lambda x: hyrox_order.index(x) if x in hyrox_order else 999
-        )
-        df = df.sort_values("order").drop(columns="order")
 
         st.subheader("Dati estratti")
         st.dataframe(df, use_container_width=True)
