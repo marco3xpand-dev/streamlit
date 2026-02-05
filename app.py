@@ -121,13 +121,13 @@ def extract_station_times(pil_img):
 runs_img = st.file_uploader("Screenshot RUNS", type=["png", "jpg", "jpeg"])
 stations_img = st.file_uploader("Screenshot STATIONS", type=["png", "jpg", "jpeg"])
 
-if runs_img and stations_img and st.button("Processa e genera CSV"):
+#if runs_img and stations_img and st.button("Processa e genera CSV"):
 
-    with st.spinner("OCR in corso..."):
-        run_times = extract_runs_flexible(Image.open(runs_img))
-        station_times = extract_station_times(Image.open(stations_img))
+   # with st.spinner("OCR in corso..."):
+     #   run_times = extract_runs_flexible(Image.open(runs_img))
+     #   station_times = extract_station_times(Image.open(stations_img))
 
-    results = []
+   # results = []
 
     # -------- RUNS --------
 run_times = extract_runs_roi(Image.open(runs_img))
