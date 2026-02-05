@@ -32,19 +32,32 @@ def mmss_to_sec(t):
 # --------------------------------------------------
 from pytesseract import Output
 
-def extract_runs_flexible(pil_img):
+def extract_runs_roi(pil_img):
     img = np.array(pil_img)
     h, w, _ = img.shape
 
-    # crop status bar (molto conservativo)
-    img = img[int(h * 0.08):h, :]
+    # -----------------------------
+    # ROI RUNS (percentuale)
+    # -----------------------------
+    y1 = int(h * 0.20)
+    y2 = int(h * 0.90)
+    x1 = int(w * 0.55)
+    x2 = int(w * 0.85)
 
-    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+    roi = img[y1:y2, x1:x2]
+
+    # -----------------------------
+    # Preprocessing
+    # -----------------------------
+    gray = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY)
     gray = cv2.resize(gray, None, fx=2, fy=2, interpolation=cv2.INTER_CUBIC)
     _, thresh = cv2.threshold(
         gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU
     )
 
+    # -----------------------------
+    # OCR con bounding box
+    # -----------------------------
     data = pytesseract.image_to_data(
         thresh,
         output_type=Output.DATAFRAME,
@@ -54,44 +67,21 @@ def extract_runs_flexible(pil_img):
     data = data.dropna(subset=["text"])
     data["text"] = data["text"].str.strip()
 
-    # mm:ss
-    mask = data["text"].str.match(r"^\d{2}:\d{2}$")
-    data = data[mask]
+    # -----------------------------
+    # Tieni SOLO mm:ss
+    # -----------------------------
+    data = data[data["text"].str.match(r"^\d{2}:\d{2}$")]
 
     if data.empty:
         return []
 
-    # in secondi
-    data["sec"] = data["text"].apply(mmss_to_sec)
+    # -----------------------------
+    # Ordine verticale = ordine runs
+    # -----------------------------
+    data = data.sort_values("top")
 
-    # filtro fisiologico run HYROX
-    data = data[(data["sec"] > 150) & (data["sec"] < 420)]
+    return data["text"].tolist()
 
-    if data.empty:
-        return []
-
-    # coordinate
-    data["x_center"] = data["left"] + data["width"] / 2
-
-    # --- TENTATIVO CLUSTER COLONNE ---
-    try:
-        data["col"] = pd.qcut(data["x_center"], q=3, duplicates="drop")
-        counts = data["col"].value_counts()
-
-        if counts.empty:
-            raise ValueError
-
-        best_col = counts.idxmax()
-        runs = data[data["col"] == best_col]
-
-    except Exception:
-        # FALLBACK: una sola colonna → ordina tutto verticalmente
-        runs = data
-
-    # ordine verticale
-    runs = runs.sort_values("top")
-
-    return runs["text"].tolist()
 
 
 # --------------------------------------------------
@@ -140,11 +130,14 @@ if runs_img and stations_img and st.button("Processa e genera CSV"):
     results = []
 
     # -------- RUNS --------
-    if len(run_times) != 8:
-        st.warning(f"Trovate {len(run_times)} runs (attese 8)")
+run_times = extract_runs_roi(Image.open(runs_img))
 
-    for i, t in enumerate(run_times[:8]):
-        results.append((f"Run_{i+1}", mmss_to_sec(t)))
+if len(run_times) != 8:
+    st.warning(f"RUNS trovate: {len(run_times)} (attese 8)")
+
+for i, t in enumerate(run_times[:8]):
+    results.append((f"Run_{i+1}", mmss_to_sec(t)))
+
 
     # -------- STATIONS --------
     station_order = [
