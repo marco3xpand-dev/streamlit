@@ -123,21 +123,22 @@ stations_img = st.file_uploader("Screenshot STATIONS", type=["png", "jpg", "jpeg
 
 if runs_img and stations_img and st.button("Processa e genera CSV"):
 
-#    with st.spinner("OCR in corso..."):
-#       run_times = extract_runs_flexible(Image.open(runs_img))
-#       station_times = extract_station_times(Image.open(stations_img))
+    with st.spinner("OCR in corso..."):
 
-  #  results = []
+        # -------- RUNS --------
+        run_times = extract_runs_roi(Image.open(runs_img))
 
-    # -------- RUNS --------
-    run_times = extract_runs_roi(Image.open(runs_img))
+        # -------- STATIONS --------
+        station_times = extract_station_times(Image.open(stations_img))
 
-if len(run_times) != 8:
-   st.warning(f"RUNS trovate: {len(run_times)} (attese 8)")
+    results = []
 
-for i, t in enumerate(run_times[:8]):
-    results.append((f"Run_{i+1}", mmss_to_sec(t)))
+    # -------- VALIDAZIONE RUNS --------
+    if len(run_times) != 8:
+        st.warning(f"RUNS trovate: {len(run_times)} (attese 8)")
 
+    for i, t in enumerate(run_times[:8]):
+        results.append((f"Run_{i+1}", mmss_to_sec(t)))
 
     # -------- STATIONS --------
     station_order = [
@@ -154,6 +155,7 @@ for i, t in enumerate(run_times[:8]):
     for name, t in zip(station_order, station_times):
         results.append((name, mmss_to_sec(t)))
 
+    # -------- OUTPUT --------
     if not results:
         st.error("Nessun dato riconosciuto.")
     else:
@@ -169,4 +171,5 @@ for i, t in enumerate(run_times[:8]):
             file_name="hyrox_race.csv",
             mime="text/csv"
         )
+
 
