@@ -30,11 +30,13 @@ def mmss_to_sec(t):
 # --------------------------------------------------
 # OCR RUNS – flessibile e robusto
 # --------------------------------------------------
+from pytesseract import Output
+
 def extract_runs_flexible(pil_img):
     img = np.array(pil_img)
     h, w, _ = img.shape
 
-    # rimuove SOLO status bar (molto conservativo)
+    # crop status bar (molto conservativo)
     img = img[int(h * 0.08):h, :]
 
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
@@ -56,6 +58,9 @@ def extract_runs_flexible(pil_img):
     mask = data["text"].str.match(r"^\d{2}:\d{2}$")
     data = data[mask]
 
+    if data.empty:
+        return []
+
     # in secondi
     data["sec"] = data["text"].apply(mmss_to_sec)
 
@@ -65,14 +70,29 @@ def extract_runs_flexible(pil_img):
     if data.empty:
         return []
 
-    # clustering per colonna (x)
+    # coordinate
     data["x_center"] = data["left"] + data["width"] / 2
-    data["col"] = pd.qcut(data["x_center"], q=3, duplicates="drop")
 
-    best_col = data["col"].value_counts().idxmax()
-    runs = data[data["col"] == best_col].sort_values("top")
+    # --- TENTATIVO CLUSTER COLONNE ---
+    try:
+        data["col"] = pd.qcut(data["x_center"], q=3, duplicates="drop")
+        counts = data["col"].value_counts()
+
+        if counts.empty:
+            raise ValueError
+
+        best_col = counts.idxmax()
+        runs = data[data["col"] == best_col]
+
+    except Exception:
+        # FALLBACK: una sola colonna → ordina tutto verticalmente
+        runs = data
+
+    # ordine verticale
+    runs = runs.sort_values("top")
 
     return runs["text"].tolist()
+
 
 # --------------------------------------------------
 # OCR STATIONS – semplice (ordine HYROX)
